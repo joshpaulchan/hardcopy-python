@@ -1,0 +1,104 @@
+#!/usr/bin/env python
+"""
+@name       hardcopy
+@version    0.1.0
+@desc       Tool to download google drive files for archiving
+
+@author     Joshua Paul A. Chan (@joshpaulchan)
+"""
+
+import pathlib
+import json
+from os import path
+
+import click
+
+import downloader
+
+def resolve_path(pathname):
+    """
+    Resolves relative pathnames to absolute filenames from current directory.
+    
+    @param  {str}   pathname    the relative pathname to resolve
+    @return {str}   the absolute path of the given pathname
+    """
+    return path.abspath(path.join('.', pathname))
+
+def download(pathobj, opts):
+    """
+    Parses path object and passes of file ID and metadata to downloader.
+    
+    @param  {pathlib.Path}  pathobj     the target Drive file   
+    @param  {dict}          opts        the download options
+    @return {None}
+    """
+    try:
+        # Parse for fileId
+        with open(str(pathobj), 'r') as file:
+            file_info = json.load(file)
+        
+        doc_id = file_info['doc_id']
+        
+        # Pass to downloader
+        downloader.download(doc_id, str(pathobj) + '.' + opts['output_extension'], opts)
+    except UserWarning:
+        print("The file `{}` does not exist.".format(pathobj.name))
+    except ValueError:
+        print("{} is not a valid JSON file.".format(pathobj.name))
+    except KeyError:
+        print("{} is not a valid Google Drive file.".format(pathobj.name))
+    
+def visit(dir_path, exclude, opts):
+    """
+    Recursively visits directories using DFS, downloading documents if they're
+    not being excluded.
+    
+    @param  {pathlib.Path}  dir         the path to the root directory
+    @param  {set}           exclude     the filetypes to exclude
+        enum: 'doc', 'sheet', 'slide'
+    @param  {dict}          opts        the download options for each specific
+    filetype
+    @return {None}
+    """
+    if dir_path.is_dir():
+        for item in dir_path.iterdir():
+            visit(item, exclude, opts)
+    elif dir_path.is_file():
+        file_type = dir_path.name.split('.')[-1]
+        if file_type == 'gdoc' and 'doc' not in exclude:
+            print("Found doc:{}".format(dir_path))
+            download(dir_path, opts.get('doc'))
+        elif file_type == 'gsheet' and 'sheet' not in exclude:
+            print("Found sheet:{}".format(dir_path))
+            download(dir_path, opts.get('sheet'))
+        elif file_type == 'gslides' and 'slides' not in exclude:
+            print("Found slides:{}".format(dir_path))
+            download(dir_path, opts.get('slides'))
+
+@click.command()
+@click.option('--only-type', default="doc,sheet,slides", help="Which document types to download?")
+@click.argument('pathnames', nargs=-1)
+def main(only_type, pathnames):
+    """Download and export Google Drive files from the command line."""
+    exclude = {'doc', 'sheet', 'slides'} - {x.strip() for x in only_type.split(',')}
+    paths = list(map(resolve_path, pathnames))
+    
+    opts = {
+        'doc' : {
+            'output_extension' : 'pdf', 'mime_type' : 'application/pdf'
+        },
+        'sheet' : {
+            'output_extension' : 'xlsx',
+            'mime_type' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        },
+        'slides' : {
+            'output_extension' : 'pptx',
+            'mime_type' : 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        },
+    }
+    
+    for root in paths:
+        visit(pathlib.Path(root), exclude, opts)
+    
+if __name__ == '__main__':
+    main()
